@@ -16,7 +16,23 @@ DEFILLAMA_API_URL = "https://yields.llama.fi/pools"
 # This is for a generic Aave V2 stablecoin pool (e.g., DAI or USDC on Polygon)
 # You will replace these with the actual chain and pool ID you want to monitor
 TARGET_CHAIN = "Polygon" 
-TARGET_POOL_ID = os.getenv("TARGET_POOL_ID", "aave-v2-polygon-dai") 
+TARGET_POOL_ID = # Target Aave Pool IDs to monitor (Stablecoins, BTC, and key assets across V2/V3)
+TARGET_POOL_IDS = [
+    # Aave V3 Pools (Stablecoins)
+    "aave-v3-arbitrum-usdc",
+    "aave-v3-polygon-usdc",
+    "aave-v3-ethereum-usdc",
+    "aave-v3-optimism-usdc",
+    "aave-v3-avalanche-usdc",
+    "aave-v3-base-usdc",
+    # Aave V3 Pools (BTC Assets)
+    "aave-v3-ethereum-wbtc",     # Wrapped BTC (WBTC)
+    "aave-v3-ethereum-cbbtc",    # **YOUR TARGET POOL: Coinbase Wrapped BTC**
+    "aave-v3-arbitrum-wbtc",
+    # Aave V2 Pools (Legacy)
+    "aave-v2-polygon-dai",
+    "aave-v2-ethereum-dai",
+] 
 
 # Monitoring thresholds
 APY_THRESHOLD = float(os.getenv("APY_THRESHOLD", "5.0")) # Default 5.0%
