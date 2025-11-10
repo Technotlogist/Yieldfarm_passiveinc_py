@@ -12,11 +12,7 @@ load_dotenv()
 # Base URL for the DefiLlama API endpoint for APY data
 DEFILLAMA_API_URL = "https://yields.llama.fi/pools" 
 
-# Target yield pool configuration
-# This is for a generic Aave V2 stablecoin pool (e.g., DAI or USDC on Polygon)
-# You will replace these with the actual chain and pool ID you want to monitor
-TARGET_CHAIN = "Polygon" 
-TARGET_POOL_ID = # Target Aave Pool IDs to monitor (Stablecoins, BTC, and key assets across V2/V3)
+# Target Aave Pool IDs to monitor (Stablecoins, BTC, and key assets across V2/V3)
 TARGET_POOL_IDS = [
     # Aave V3 Pools (Stablecoins)
     "aave-v3-arbitrum-usdc",
@@ -27,21 +23,23 @@ TARGET_POOL_IDS = [
     "aave-v3-base-usdc",
     # Aave V3 Pools (BTC Assets)
     "aave-v3-ethereum-wbtc",     # Wrapped BTC (WBTC)
-    "aave-v3-ethereum-cbbtc",    # **YOUR TARGET POOL: Coinbase Wrapped BTC**
+    "aave-v3-ethereum-cbbtc",    # Coinbase Wrapped BTC (Your Target)
     "aave-v3-arbitrum-wbtc",
     # Aave V2 Pools (Legacy)
     "aave-v2-polygon-dai",
     "aave-v2-ethereum-dai",
-] 
+]
 
 # Monitoring thresholds
-APY_THRESHOLD = float(os.getenv("APY_THRESHOLD", "5.0")) # Default 5.0%
+# Gets the APY_THRESHOLD from GitHub Secrets/ENV, defaults to 5.0%
+APY_THRESHOLD = float(os.getenv("APY_THRESHOLD", "5.0")) 
 
-# File path configuration
+# File path configuration for batch logging/exporting all Aave pools
+PROJECT_SLUG = "aave-all" 
 LOGS_DIR = "data/logs"
 EXPORTS_DIR = "data/exports"
-LOG_FILE = os.path.join(LOGS_DIR, f"apy_log_{TARGET_POOL_ID}.csv")
-EXPORT_FILE = os.path.join(EXPORTS_DIR, f"apy_snapshot_{TARGET_POOL_ID}.json")
+LOG_FILE = os.path.join(LOGS_DIR, f"apy_log_{PROJECT_SLUG}.csv")
+EXPORT_FILE = os.path.join(EXPORTS_DIR, f"apy_snapshot_{PROJECT_SLUG}.json")
 
 
 def setup_directories():
@@ -50,7 +48,7 @@ def setup_directories():
     os.makedirs(EXPORTS_DIR, exist_ok=True)
 
 
-def fetch_pool_data():
+def fetch_all_pool_data():
     """Fetches all yield pool data from DefiLlama."""
     print(f"Fetching data from DefiLlama: {DEFILLAMA_API_URL}")
     try:
@@ -62,88 +60,87 @@ def fetch_pool_data():
         return []
 
 
-def find_target_pool(all_pools):
-    """Searches for the specific target pool by chain and ID."""
-    print(f"Searching for pool ID: {TARGET_POOL_ID} on Chain: {TARGET_CHAIN}")
-    for pool in all_pools:
-        # Check if the pool is on the target chain and matches the pool ID
-        if pool.get('chain') == TARGET_CHAIN and pool.get('pool') == TARGET_POOL_ID:
-            print("Target pool found.")
-            return pool
+def find_target_pools_data(all_pools):
+    """Searches for the specific target pools from the full list."""
+    target_data = {}
     
-    print(f"Warning: Target pool {TARGET_POOL_ID} not found in the list.")
-    return None
+    # Create a dictionary for quick lookup: {pool_id: pool_data}
+    pool_lookup = {pool.get('pool'): pool for pool in all_pools}
+    
+    print(f"Searching for {len(TARGET_POOL_IDS)} target Aave pools...")
+
+    for pool_id in TARGET_POOL_IDS:
+        if pool_id in pool_lookup:
+            target_data[pool_id] = pool_lookup[pool_id]
+        else:
+            print(f"Warning: Pool ID {pool_id} not found.")
+
+    return target_data
 
 
-def log_apy(pool_data):
-    """Appends the current APY data to a CSV log file."""
-    if not pool_data:
-        print("No pool data to log.")
-        return
-
-    # Extract relevant data points
+def log_and_check_pools(pools_data):
+    """Processes each pool: logs data, exports latest, and checks threshold."""
+    all_new_entries = []
     current_time = datetime.now().isoformat()
-    apy_value = pool_data.get('apy', 0.0)
     
-    # Create a DataFrame for easy handling
-    new_entry = pd.DataFrame([{
-        'timestamp': current_time,
-        'apy': apy_value,
-        'chain': pool_data.get('chain'),
-        'pool_id': pool_data.get('pool'),
-        'project': pool_data.get('project'),
-        'tvlUsd': pool_data.get('tvlUsd', 0.0)
-    }])
+    for pool_id, pool_data in pools_data.items():
+        apy_value = pool_data.get('apy', 0.0)
+        
+        # 1. Create Log Entry
+        new_entry = {
+            'timestamp': current_time,
+            'pool_id': pool_data.get('pool'),
+            'chain': pool_data.get('chain'),
+            'apy': apy_value,
+            'project': pool_data.get('project'),
+            'tvlUsd': pool_data.get('tvlUsd', 0.0)
+        }
+        all_new_entries.append(new_entry)
+        
+        # 2. Check Threshold
+        if apy_value >= APY_THRESHOLD:
+            print(f"\n✨ ALERT: High Yield Detected! Pool: {pool_id} | APY: {apy_value:.2f}% >= Threshold: {APY_THRESHOLD:.2f}% ✨")
+            # Notification Placeholder: Integrate your Discord/Telegram webhook here!
+        else:
+            print(f"Pool: {pool_id} | APY: {apy_value:.2f}% (Below threshold)")
 
-    # Check if file exists to decide whether to write headers
-    file_exists = os.path.exists(LOG_FILE)
-    
-    # Append to the CSV file
-    new_entry.to_csv(LOG_FILE, mode='a', header=not file_exists, index=False)
-    print(f"Logged APY: {apy_value:.2f}% to {LOG_FILE}")
+    # 3. Batch Log to CSV
+    if all_new_entries:
+        new_df = pd.DataFrame(all_new_entries)
+        file_exists = os.path.exists(LOG_FILE)
+        new_df.to_csv(LOG_FILE, mode='a', header=not file_exists, index=False)
+        print(f"\nSuccessfully logged {len(all_new_entries)} pool entries to {LOG_FILE}")
 
 
-def export_latest_data(pool_data):
-    """Exports the full latest pool data to a JSON file."""
-    if pool_data:
+def export_latest_data(pools_data):
+    """Exports the full latest pool data to a single JSON file."""
+    if pools_data:
         with open(EXPORT_FILE, 'w') as f:
-            json.dump(pool_data, f, indent=4)
-        print(f"Exported latest data to {EXPORT_FILE}")
-
-
-def check_threshold(apy_value):
-    """Checks the APY against the defined threshold and sends an alert."""
-    if apy_value >= APY_THRESHOLD:
-        print(f"\n✨ ALERT: High Yield Detected! APY ({apy_value:.2f}%) >= Threshold ({APY_THRESHOLD:.2f}%) ✨")
-        # --- Notification Placeholder ---
-        # Future step: Integrate a function here to send a notification (Discord, Telegram, Email)
-        # For example: send_notification(f"APY Alert! {TARGET_POOL_ID} is now at {apy_value:.2f}%!")
-    else:
-        print(f"APY ({apy_value:.2f}%) is below the threshold of {APY_THRESHOLD:.2f}%. Monitoring continues.")
+            # We export the full dictionary {pool_id: pool_data}
+            json.dump(pools_data, f, indent=4)
+        print(f"Exported latest data for {len(pools_data)} pools to {EXPORT_FILE}")
 
 
 def main():
     """Main execution function for the APY monitor."""
     setup_directories()
     
-    all_pools = fetch_pool_data()
+    all_pools = fetch_all_pool_data()
     if not all_pools:
         print("Failed to get pool data. Exiting.")
         return
 
-    target_pool = find_target_pool(all_pools)
+    # Find the data for all pools in our TARGET_POOL_IDS list
+    target_pools_data = find_target_pools_data(all_pools)
 
-    if target_pool:
-        current_apy = target_pool.get('apy', 0.0)
+    if target_pools_data:
+        # Log and check all target pools
+        log_and_check_pools(target_pools_data)
         
-        # Log and export the data
-        log_apy(target_pool)
-        export_latest_data(target_pool)
-        
-        # Check the yield threshold
-        check_threshold(current_apy)
+        # Export the latest data for all target pools
+        export_latest_data(target_pools_data)
     else:
-        print(f"Could not process APY check for {TARGET_POOL_ID}. Check configuration.")
+        print("Could not find any of the target Aave pools. Check the pool ID list.")
 
 
 if __name__ == "__main__":
