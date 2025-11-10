@@ -1,0 +1,7 @@
+# Web Requests and JSON Processing
+requests
+pandas
+numpy
+
+# Environment Variables
+python-dotenv
