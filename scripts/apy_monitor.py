@@ -6,35 +6,26 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 # --- Configuration ---
-# Load environment variables (like API keys or thresholds) from a .env file
 load_dotenv() 
 
 # Base URL for the DefiLlama API endpoint for APY data
 DEFILLAMA_API_URL = "https://yields.llama.fi/pools" 
 
-# Target Aave Pool IDs to monitor (Stablecoins, BTC, and key assets across V2/V3)
-TARGET_POOL_IDS = [
-    # Aave V3 Pools (Stablecoins)
-    "aave-v3-arbitrum-usdc",
-    "aave-v3-polygon-usdc",
-    "aave-v3-ethereum-usdc",
-    "aave-v3-optimism-usdc",
-    "aave-v3-avalanche-usdc",
-    "aave-v3-base-usdc",
-    # Aave V3 Pools (BTC Assets)
-    "aave-v3-ethereum-wbtc",     # Wrapped BTC (WBTC)
-    "aave-v3-ethereum-cbbtc",    # Coinbase Wrapped BTC (Your Target)
-    "aave-v3-arbitrum-wbtc",
-    # Aave V2 Pools (Legacy)
-    "aave-v2-polygon-dai",
-    "aave-v2-ethereum-dai",
+# Target Aave Assets/Chains to monitor (We will find the IDs dynamically)
+# This list is used to FILTER the pools found under the 'aave' project.
+TARGET_ASSETS = [
+    # Stablecoins to monitor
+    "USDC", "DAI", "USDT", "FRAX",
+    # BTC assets to monitor (includes your target cbBTC)
+    "WBTC", "CBTC", "rBTC",
+    # ETH LSTs
+    "wstETH", "rETH"
 ]
 
 # Monitoring thresholds
-# Gets the APY_THRESHOLD from GitHub Secrets/ENV, defaults to 5.0%
-APY_THRESHOLD = float(os.getenv("APY_THRESHOLD", "5.0")) 
+APY_THRESHOLD = float(os.getenv("APY_THRESHOLD", "4.0")) # Now set to 4.0% via GitHub Secret
 
-# File path configuration for batch logging/exporting all Aave pools
+# File path configuration
 PROJECT_SLUG = "aave-all" 
 LOGS_DIR = "data/logs"
 EXPORTS_DIR = "data/exports"
@@ -52,8 +43,8 @@ def fetch_all_pool_data():
     """Fetches all yield pool data from DefiLlama."""
     print(f"Fetching data from DefiLlama: {DEFILLAMA_API_URL}")
     try:
-        response = requests.get(DEFILLAMA_API_URL, timeout=15)
-        response.raise_for_status() # Raises an HTTPError for bad responses (4xx or 5xx)
+        response = requests.get(DEFILLAMA_API_URL, timeout=20) # Increased timeout
+        response.raise_for_status() 
         return response.json().get('data', [])
     except requests.exceptions.RequestException as e:
         print(f"Error fetching DefiLlama data: {e}")
@@ -61,20 +52,25 @@ def fetch_all_pool_data():
 
 
 def find_target_pools_data(all_pools):
-    """Searches for the specific target pools from the full list."""
+    """Searches for all pools belonging to 'Aave' and filters by asset."""
     target_data = {}
-    
-    # Create a dictionary for quick lookup: {pool_id: pool_data}
-    pool_lookup = {pool.get('pool'): pool for pool in all_pools}
-    
-    print(f"Searching for {len(TARGET_POOL_IDS)} target Aave pools...")
+    print(f"Searching for pools belonging to project: Aave")
 
-    for pool_id in TARGET_POOL_IDS:
-        if pool_id in pool_lookup:
-            target_data[pool_id] = pool_lookup[pool_id]
-        else:
-            print(f"Warning: Pool ID {pool_id} not found.")
-
+    for pool in all_pools:
+        # 1. Filter by Project (Aave and Aave V3)
+        project = pool.get('project', '').lower()
+        if 'aave' not in project:
+            continue
+            
+        # 2. Filter by Asset Symbol (USDC, CBTC, etc.)
+        symbol = pool.get('symbol', '').upper()
+        
+        # Check if the pool's symbol is in our target asset list
+        if any(asset in symbol for asset in TARGET_ASSETS):
+            pool_id = pool.get('pool')
+            target_data[pool_id] = pool
+    
+    print(f"Found {len(target_data)} relevant Aave pools to monitor.")
     return target_data
 
 
@@ -86,11 +82,15 @@ def log_and_check_pools(pools_data):
     for pool_id, pool_data in pools_data.items():
         apy_value = pool_data.get('apy', 0.0)
         
+        # Determine a friendly name for logging
+        pool_name = f"{pool_data.get('symbol')} ({pool_data.get('chain')} {pool_data.get('project', 'Aave')})"
+        
         # 1. Create Log Entry
         new_entry = {
             'timestamp': current_time,
-            'pool_id': pool_data.get('pool'),
+            'pool_id': pool_id, # This is the DefiLlama UUID
             'chain': pool_data.get('chain'),
+            'asset_symbol': pool_data.get('symbol'),
             'apy': apy_value,
             'project': pool_data.get('project'),
             'tvlUsd': pool_data.get('tvlUsd', 0.0)
@@ -99,10 +99,10 @@ def log_and_check_pools(pools_data):
         
         # 2. Check Threshold
         if apy_value >= APY_THRESHOLD:
-            print(f"\n✨ ALERT: High Yield Detected! Pool: {pool_id} | APY: {apy_value:.2f}% >= Threshold: {APY_THRESHOLD:.2f}% ✨")
-            # Notification Placeholder: Integrate your Discord/Telegram webhook here!
+            print(f"\n✨ ALERT: High Yield Detected! Pool: {pool_name} | APY: {apy_value:.2f}% >= Threshold: {APY_THRESHOLD:.2f}% ✨")
+            # Future Step: Integrate your Discord/Telegram webhook here!
         else:
-            print(f"Pool: {pool_id} | APY: {apy_value:.2f}% (Below threshold)")
+            print(f"Pool: {pool_name} | APY: {apy_value:.2f}% (Below threshold)")
 
     # 3. Batch Log to CSV
     if all_new_entries:
@@ -116,7 +116,6 @@ def export_latest_data(pools_data):
     """Exports the full latest pool data to a single JSON file."""
     if pools_data:
         with open(EXPORT_FILE, 'w') as f:
-            # We export the full dictionary {pool_id: pool_data}
             json.dump(pools_data, f, indent=4)
         print(f"Exported latest data for {len(pools_data)} pools to {EXPORT_FILE}")
 
@@ -130,17 +129,14 @@ def main():
         print("Failed to get pool data. Exiting.")
         return
 
-    # Find the data for all pools in our TARGET_POOL_IDS list
+    # Find the data for all relevant Aave pools
     target_pools_data = find_target_pools_data(all_pools)
 
     if target_pools_data:
-        # Log and check all target pools
         log_and_check_pools(target_pools_data)
-        
-        # Export the latest data for all target pools
         export_latest_data(target_pools_data)
     else:
-        print("Could not find any of the target Aave pools. Check the pool ID list.")
+        print("Could not find any relevant Aave pools. Check the TARGET_ASSETS list.")
 
 
 if __name__ == "__main__":
