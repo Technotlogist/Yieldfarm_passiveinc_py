@@ -1,0 +1,44 @@
+name: APY Monitor Scheduler
+
+on:
+  schedule:
+    # Runs at the start of every hour (e.g., 1:00, 2:00, 3:00 UTC)
+    - cron: '0 * * * *' 
+  workflow_dispatch:
+    # Allows for manual triggering from the GitHub Actions tab
+
+jobs:
+  run_apy_monitor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⬇️ Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11' # Use a modern stable Python version
+
+      - name: ⚙️ Install Dependencies
+        # Install the required libraries from requirements.txt
+        run: pip install -r requirements.txt
+        
+      # Note: We skip the .env setup for now as TARGET_POOL_ID has a default value 
+      # and the APY_THRESHOLD is hardcoded in the script for the first run.
+
+      - name: 🚀 Run APY Monitoring Script
+        # Execute the Python script
+        run: python scripts/apy_monitor.py
+      
+      - name: 💾 Commit and Push Log Files
+        # Use a Git Action to commit the newly generated data/logs/ files
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: auto-update APY logs and exports"
+          # Only commit files in the data directory
+          file_pattern: data/
+          # Configure committer identity
+          commit_user_name: GitHub Actions Bot
+          commit_user_email: actions@github.com
+          commit_author: GitHub Actions Bot <actions@github.com>
